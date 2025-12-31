@@ -70,11 +70,15 @@ def preprocess_text(text):
     # Convert to lowercase
     text = text.lower()
     
-    # Remove punctuation and special characters
-    text = re.sub(r'[^a-zA-Z0-9\s]', ' ', text)
+    # Remove punctuation and special characters but keep meaningful words
+    text = re.sub(r'[^a-zA-Z\s]', ' ', text)
     
     # Remove extra whitespace
     text = ' '.join(text.split())
+    
+    # Ensure we don't return empty strings that would cause issues with TF-IDF
+    if not text.strip():
+        return 'unknown'
     
     return text
 
@@ -91,8 +95,8 @@ def initialize_data():
     global movies_df, ratings_df, movies_metadata_df, tfidf_matrix, tfidf_vectorizer, kmeans, nn_model, cluster_names
     
     print("Loading MovieLens 100k dataset...")
-    ratings_df = pd.read_csv('data/ml-100k/u.data', sep='\t', names=['user_id', 'movie_id', 'rating', 'timestamp'])
-    movies_df = pd.read_csv('data/ml-100k/u.item', sep='|', encoding='latin-1', 
+    ratings_df = pd.read_csv('../data/ml-100k/u.data', sep='\t', names=['user_id', 'movie_id', 'rating', 'timestamp'])
+    movies_df = pd.read_csv('../data/ml-100k/u.item', sep='|', encoding='latin-1', 
                             names=['movie_id', 'title', 'release_date', 'video_release_date', 'IMDb_URL', 
                                    'unknown', 'Action', 'Adventure', 'Animation', 'Children', 'Comedy', 
                                    'Crime', 'Documentary', 'Drama', 'Fantasy', 'Film-Noir', 'Horror', 
@@ -202,11 +206,11 @@ def initialize_data():
     tfidf_vectorizer = TfidfVectorizer(
         max_features=5000,
         ngram_range=(1, 2),
-        stop_words='english',
+        stop_words=None,  # Changed from 'english' to None to avoid removing all content
         lowercase=True,
         strip_accents='unicode',
         analyzer='word',
-        token_pattern=r'\b[a-zA-Z]{2+}\b'  # Only include alphabetic words with 2+ characters
+        token_pattern=r'\b[a-zA-Z]{2,}\b'  # Only include alphabetic words with 2+ characters
     )
 
     # Fit and transform the combined text
