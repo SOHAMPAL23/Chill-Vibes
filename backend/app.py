@@ -92,7 +92,7 @@ def extract_genres(genre_json):
 
 def initialize_data():
     """Initialize all data and models"""
-    global movies_df, ratings_df, movies_metadata_df, tfidf_matrix, tfidf_vectorizer, kmeans, nn_model, cluster_names
+    global movies_df, ratings_df, movies_metadata_df, tfidf_matrix, tfidf_vectorizer, kmeans, nn_model, content_model, cluster_names
     
     print("Loading MovieLens 100k dataset...")
     ratings_df = pd.read_csv('../data/ml-100k/u.data', sep='\t', names=['user_id', 'movie_id', 'rating', 'timestamp'])
@@ -307,8 +307,18 @@ def initialize_data():
 
     # Use NearestNeighbors with cosine metric for collaborative filtering
     print("Training collaborative filtering model...")
-    nn_model = NearestNeighbors(n_neighbors=20, metric='cosine', algorithm='brute')
-    nn_model.fit(user_item_matrix)  # Fit on the user-item matrix
+    collaborative_filtering_model = NearestNeighbors(n_neighbors=20, metric='cosine', algorithm='brute')
+    collaborative_filtering_model.fit(user_item_matrix)  # Fit on the user-item matrix
+
+    # Create content-based similarity model using TF-IDF matrix
+    print("Training content-based similarity model...")
+    content_similarity_model = NearestNeighbors(n_neighbors=20, metric='cosine', algorithm='brute')
+    content_similarity_model.fit(tfidf_matrix)  # Fit on the TF-IDF matrix
+
+    # Store both models globally
+    global nn_model, content_model
+    nn_model = collaborative_filtering_model
+    content_model = content_similarity_model
 
     print("Data initialization completed successfully!")
 
@@ -320,8 +330,8 @@ def get_item_item_recommendations(movie_idx, n_recommendations=10):
     # Get the movie vector from the TF-IDF matrix
     movie_vector = tfidf_matrix[movie_idx:movie_idx+1]
     
-    # Find similar items using the trained KNN model
-    distances, indices = nn_model.kneighbors(movie_vector, n_neighbors=n_recommendations+1)
+    # Find similar items using the content-based similarity model
+    distances, indices = content_model.kneighbors(movie_vector, n_neighbors=n_recommendations+1)
     
     # Exclude the first result (the movie itself)
     similar_indices = indices[0][1:]
