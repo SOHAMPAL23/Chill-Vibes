@@ -1,0 +1,62 @@
+.cluster-visualization {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+  gap: 1rem;
+  margin-bottom: 1.5rem;
+}
+
+.cluster-item {
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 10px;
+  padding: 1rem;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  border: 2px solid transparent;
+}
+
+.cluster-item:hover {
+  background: rgba(255, 107, 107, 0.3);
+  transform: scale(1.02);
+  box-shadow: 0 4px 15px rgba(255, 107, 107, 0.4);
+}
+
+.cluster-item.selected {
+  background: linear-gradient(45deg, #ff6b6b, #ff8e53);
+  border-color: #ff6b6b;
+  box-shadow: 0 4px 15px rgba(255, 107, 107, 0.4);
+}
+
+.cluster-item h4 {
+  margin: 0 0 0.5rem 0;
+  color: #ff6b6b;
+}
+
+.cluster-item p {
+  margin: 0.25rem 0;
+  font-size: 0.9rem;
+  color: #f0f0f0;
+}
+
+.cluster-movies-preview {
+  margin-top: 0.5rem;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+}
+
+.movie-preview {
+  background: rgba(78, 205, 196, 0.2);
+  padding: 0.25rem 0.5rem;
+  border-radius: 12px;
+  font-size: 0.7rem;
+  color: #4ecdc4;
+}
+
+.no-clusters {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  height: 200px;
+  color: #f0f0f0;
+  font-style: italic;
+}
