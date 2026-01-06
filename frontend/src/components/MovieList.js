@@ -1,21 +1,31 @@
 import React from 'react';
+import './MovieList.css';
 
 const MovieList = ({ movies, onMovieSelect, selectedMovie }) => {
+  const handleMovieClick = (movie) => {
+    onMovieSelect(movie);
+  };
+
   return (
     <div className="movie-list">
-      <h3>All Movies</h3>
-      <div className="movies-container">
-        {movies.slice(0, 50).map((movie) => (
+      {movies.length > 0 ? (
+        movies.map((movie) => (
           <div
             key={movie.id}
             className={`movie-item ${selectedMovie && selectedMovie.id === movie.id ? 'selected' : ''}`}
-            onClick={() => onMovieSelect(movie)}
+            onClick={() => handleMovieClick(movie)}
+            title={`${movie.title} - ${movie.cluster_name}`}
           >
-            <div className="movie-title">{movie.title}</div>
-            <div className="movie-cluster">{movie.cluster_name}</div>
+            <h4>{movie.title}</h4>
+            <p><strong>Cluster:</strong> {movie.cluster_name}</p>
+            <p>{movie.overview.substring(0, 100)}{movie.overview.length > 100 ? '...' : ''}</p>
           </div>
-        ))}
-      </div>
+        ))
+      ) : (
+        <div className="no-movies">
+          <p>No movies available. Please try adjusting your filters.</p>
+        </div>
+      )}
     </div>
   );
 };
