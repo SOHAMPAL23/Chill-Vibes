@@ -1,97 +1,5 @@
-#!/usr/bin/env python
-# coding: utf-8
-
-"""
-Movie Content Clustering & Recommendation System - Backend API
-Flask server to serve movie clustering and recommendation endpoints
-"""
-
-import pandas as pd
-import numpy as np
-import json
-import re
-import warnings
-warnings.filterwarnings('ignore')
-
-from flask import Flask, jsonify, request
-from flask_cors import CORS
-from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.cluster import KMeans
-from sklearn.neighbors import NearestNeighbors
-from sklearn.metrics import silhouette_score
-from sklearn.decomposition import PCA
-from scipy.sparse import csr_matrix
-from collections import Counter
-import nltk
-from nltk.corpus import stopwords
-from nltk.tokenize import word_tokenize
-from nltk.stem import WordNetLemmatizer
-import string
-
-# Download required NLTK data
-try:
-    nltk.data.find('tokenizers/punkt')
-except LookupError:
-    nltk.download('punkt')
-    
-try:
-    nltk.data.find('corpora/stopwords')
-except LookupError:
-    nltk.download('stopwords')
-    
-try:
-    nltk.data.find('corpora/wordnet')
-except LookupError:
-    nltk.download('wordnet')
-    
-try:
-    nltk.data.find('corpora/omw-1.4')
-except LookupError:
-    nltk.download('omw-1.4')
-
-app = Flask(__name__)
-CORS(app)  # Enable CORS for frontend communication
-
-# Global variables to store data
-movies_df = None
-ratings_df = None
-movies_metadata_df = None
-tfidf_matrix = None
-tfidf_vectorizer = None
-kmeans = None
-nn_model = None
-cluster_names = {}
-
-def preprocess_text(text):
-    """Clean and preprocess text data"""
-    if pd.isna(text) or text == '':
-        return ''
-    
-    # Convert to lowercase
-    text = text.lower()
-    
-    # Remove punctuation and special characters but keep meaningful words
-    text = re.sub(r'[^a-zA-Z\s]', ' ', text)
-    
-    # Remove extra whitespace
-    text = ' '.join(text.split())
-    
-    # Ensure we don't return empty strings that would cause issues with TF-IDF
-    if not text.strip():
-        return 'unknown'
-    
-    return text
-
-def extract_genres(genre_json):
-    """Extract genre tokens from JSON string"""
-    try:
-        genres = json.loads(genre_json)
-        return ' '.join([g.lower() for g in genres])
-    except:
-        return ''
-
 def initialize_data():
-    """Initialize all data and models"""
+    """Initialize all data and models with hyperparameter tuning"""
     global movies_df, ratings_df, movies_metadata_df, tfidf_matrix, tfidf_vectorizer, kmeans, nn_model, content_model, cluster_names
     
     print("Loading MovieLens 100k dataset...")
@@ -201,16 +109,88 @@ def initialize_data():
 
     print("Text preprocessing completed!")
 
-    # Initialize TF-IDF vectorizer with specified parameters
-    print("Initializing TF-IDF vectorizer with max_features=5000, ngram_range=(1,2)...")
+    # HYPERPARAMETER TUNING: Find optimal TF-IDF parameters
+    print("Performing hyperparameter tuning for TF-IDF vectorizer...")
+    
+    # Test different TF-IDF parameters
+    tfidf_params = {
+        'max_features': [3000, 5000, 8000],
+        'ngram_range': [(1, 1), (1, 2), (1, 3)],
+        'min_df': [1, 2, 3],
+        'max_df': [0.8, 0.9, 1.0]
+    }
+    
+    best_score = -1
+    best_params = None
+    
+    # For efficiency, test a subset of parameter combinations
+    for max_features in [3000, 5000]:
+        for ngram_range in [(1, 2), (1, 3)]:
+            for min_df in [1, 2]:
+                for max_df in [0.8, 0.9]:
+                    try:
+                        temp_vectorizer = TfidfVectorizer(
+                            max_features=max_features,
+                            ngram_range=ngram_range,
+                            stop_words=None,
+                            lowercase=True,
+                            strip_accents='unicode',
+                            analyzer='word',
+                            min_df=min_df,
+                            max_df=max_df,
+                            token_pattern=r'\b[a-zA-Z]{2,}\b'
+                        )
+                        
+                        temp_matrix = temp_vectorizer.fit_transform(movies_metadata_df['combined_text'])
+                        
+                        # Check if the matrix is not too sparse or empty
+                        if temp_matrix.shape[1] > 100:  # Ensure we have enough features
+                            # Use a sample for quick evaluation
+                            sample_size = min(500, temp_matrix.shape[0])
+                            sample_indices = np.random.choice(temp_matrix.shape[0], sample_size, replace=False)
+                            sample_matrix = temp_matrix[sample_indices]
+                            
+                            # Determine optimal clusters for this configuration
+                            K_range = range(2, 8)
+                            silhouette_scores = []
+                            
+                            for k in K_range:
+                                if sample_matrix.shape[0] > k:  # Ensure we have enough samples
+                                    kmeans_temp = KMeans(n_clusters=k, random_state=42, n_init=10)
+                                    cluster_labels = kmeans_temp.fit_predict(sample_matrix)
+                                    
+                                    if len(np.unique(cluster_labels)) > 1:  # Ensure multiple clusters
+                                        sil_score = silhouette_score(sample_matrix, cluster_labels)
+                                        silhouette_scores.append(sil_score)
+                            
+                            if silhouette_scores:
+                                avg_score = np.mean(silhouette_scores)
+                                if avg_score > best_score:
+                                    best_score = avg_score
+                                    best_params = {
+                                        'max_features': max_features,
+                                        'ngram_range': ngram_range,
+                                        'min_df': min_df,
+                                        'max_df': max_df
+                                    }
+                    except:
+                        continue  # Skip invalid parameter combinations
+    
+    print(f"Best TF-IDF parameters: {best_params}")
+    print(f"Best silhouette score: {best_score:.3f}")
+
+    # Initialize TF-IDF vectorizer with best parameters
+    print("Initializing TF-IDF vectorizer with optimal parameters...")
     tfidf_vectorizer = TfidfVectorizer(
-        max_features=5000,
-        ngram_range=(1, 2),
-        stop_words=None,  # Changed from 'english' to None to avoid removing all content
+        max_features=best_params['max_features'] if best_params else 5000,
+        ngram_range=best_params['ngram_range'] if best_params else (1, 2),
+        stop_words=None,
         lowercase=True,
         strip_accents='unicode',
         analyzer='word',
-        token_pattern=r'\b[a-zA-Z]{2,}\b'  # Only include alphabetic words with 2+ characters
+        min_df=best_params['min_df'] if best_params else 1,
+        max_df=best_params['max_df'] if best_params else 0.9,
+        token_pattern=r'\b[a-zA-Z]{2,}\b'
     )
 
     # Fit and transform the combined text
@@ -219,35 +199,49 @@ def initialize_data():
     print(f"TF-IDF matrix shape: {tfidf_matrix.shape}")
     print(f"Vocabulary size: {len(tfidf_vectorizer.vocabulary_)}")
 
-    # Determine optimal number of clusters using silhouette analysis
-    print("Determining optimal number of clusters...")
+    # HYPERPARAMETER TUNING: Find optimal number of clusters using multiple methods
+    print("Performing hyperparameter tuning for clustering...")
     
-    # Sample a subset for faster computation
-    sample_size = min(500, tfidf_matrix.shape[0])  # Reduced for faster computation
+    # Use elbow method and silhouette analysis to find optimal number of clusters
+    sample_size = min(800, tfidf_matrix.shape[0])  # Use larger sample for better tuning
     sample_indices = np.random.choice(tfidf_matrix.shape[0], sample_size, replace=False)
     sample_tfidf = tfidf_matrix[sample_indices]
 
-    # Test different numbers of clusters
-    K_range = range(2, 10)  # Reduced range for faster computation
+    K_range = range(2, 15)  # Test more cluster options
+    inertias = []
     silhouette_scores = []
 
     for k in K_range:
-        kmeans_temp = KMeans(n_clusters=k, random_state=42, n_init=10)
-        cluster_labels = kmeans_temp.fit_predict(sample_tfidf)
-        
-        # Calculate silhouette score
-        sil_score = silhouette_score(sample_tfidf, cluster_labels)
-        silhouette_scores.append(sil_score)
-        print(f"K={k}, Silhouette Score: {sil_score:.3f}")
+        if sample_tfidf.shape[0] > k:  # Ensure we have enough samples
+            kmeans_temp = KMeans(n_clusters=k, random_state=42, n_init=10, n_jobs=-1)  # Use all CPU cores
+            cluster_labels = kmeans_temp.fit_predict(sample_tfidf.toarray())  # Convert to dense for better stability
+            
+            if len(np.unique(cluster_labels)) > 1:  # Ensure multiple clusters
+                inertias.append(kmeans_temp.inertia_)
+                
+                # Calculate silhouette score
+                sil_score = silhouette_score(sample_tfidf, cluster_labels)
+                silhouette_scores.append(sil_score)
+                print(f"K={k}, Inertia: {kmeans_temp.inertia_:.2f}, Silhouette Score: {sil_score:.3f}")
+            else:
+                silhouette_scores.append(-1)  # Invalid clustering
+        else:
+            silhouette_scores.append(-1)  # Invalid clustering
 
     # Find optimal K based on silhouette score
-    optimal_k = K_range[np.argmax(silhouette_scores)]
-    print(f"Optimal number of clusters based on silhouette score: {optimal_k}")
+    valid_scores = [(i, score) for i, score in enumerate(silhouette_scores) if score > -1]
+    if valid_scores:
+        best_idx, best_silhouette = max(valid_scores, key=lambda x: x[1])
+        optimal_k = K_range[best_idx]
+        print(f"Optimal number of clusters based on silhouette score: {optimal_k} (score: {best_silhouette:.3f})")
+    else:
+        optimal_k = 8  # Default if no valid clustering found
+        print(f"Using default number of clusters: {optimal_k}")
 
     # Apply K-Means clustering with the optimal number of clusters
     print(f"Applying K-Means clustering with K={optimal_k}...")
-    kmeans = KMeans(n_clusters=optimal_k, random_state=42, n_init=10)
-    cluster_labels = kmeans.fit_predict(tfidf_matrix)
+    kmeans = KMeans(n_clusters=optimal_k, random_state=42, n_init=20, n_jobs=-1)  # More iterations for better convergence
+    cluster_labels = kmeans.fit_predict(tfidf_matrix.toarray())  # Convert to dense for stability
 
     # Add cluster labels to the dataframe
     movies_metadata_df['cluster'] = cluster_labels
@@ -259,18 +253,41 @@ def initialize_data():
         print(f"Cluster {cluster_id}: {count} movies")
 
     # Assign human-readable names to clusters based on their characteristics
-    cluster_names = {
-        0: "Action/Adventure",
-        1: "Romantic Comedy", 
-        2: "Drama/Thriller",
-        3: "Sci-Fi/Action",
-        4: "Horror/Thriller",
-        5: "Documentary",
-        6: "Animation/Children",
-        7: "Crime/Drama",
-        8: "Fantasy/Adventure",
-        9: "General Entertainment"
-    }
+    cluster_names = {}
+    for cluster_id in range(optimal_k):
+        cluster_names[cluster_id] = f"Cluster {cluster_id}"
+
+    # More descriptive cluster names based on content
+    # Get top terms for each cluster to create descriptive names
+    feature_names = tfidf_vectorizer.get_feature_names_out()
+    
+    def get_top_terms_per_cluster(tfidf_matrix, feature_names, cluster_labels, n_terms=5):
+        """Get top terms for each cluster based on mean TF-IDF scores"""
+        top_terms = {}
+        
+        for cluster_id in np.unique(cluster_labels):
+            # Get indices for this cluster
+            cluster_mask = cluster_labels == cluster_id
+            
+            # Get TF-IDF values for this cluster
+            cluster_tfidf = tfidf_matrix[cluster_mask]
+            
+            # Calculate mean TF-IDF score for each term in this cluster
+            mean_scores = np.array(cluster_tfidf.mean(axis=0)).flatten()
+            
+            # Get top terms
+            top_indices = mean_scores.argsort()[-n_terms:][::-1]
+            top_terms[cluster_id] = [(feature_names[i], mean_scores[i]) for i in top_indices]
+        
+        return top_terms
+
+    # Get top terms for each cluster
+    top_terms_per_cluster = get_top_terms_per_cluster(tfidf_matrix, feature_names, cluster_labels, n_terms=5)
+    
+    # Create more descriptive cluster names based on top terms
+    for cluster_id, terms in top_terms_per_cluster.items():
+        top_words = [term for term, score in terms[:3]]  # Top 3 terms
+        cluster_names[cluster_id] = f"{', '.join(top_words).title()} Cluster"
 
     # Map cluster names to the dataframe
     movies_metadata_df['cluster_name'] = movies_metadata_df['cluster'].map(cluster_names)
@@ -305,14 +322,99 @@ def initialize_data():
     # Transpose to get user-item relationships (users are rows, items are columns)
     user_item_matrix = user_item_matrix.T
 
-    # Use NearestNeighbors with cosine metric for collaborative filtering
-    print("Training collaborative filtering model...")
-    collaborative_filtering_model = NearestNeighbors(n_neighbors=20, metric='cosine', algorithm='brute')
+    # HYPERPARAMETER TUNING: Optimize collaborative filtering model
+    print("Performing hyperparameter tuning for collaborative filtering model...")
+    
+    # Test different parameters for nearest neighbors
+    nn_params = [
+        {'n_neighbors': 10, 'metric': 'cosine', 'algorithm': 'brute'},
+        {'n_neighbors': 15, 'metric': 'cosine', 'algorithm': 'brute'},
+        {'n_neighbors': 20, 'metric': 'cosine', 'algorithm': 'brute'},
+        {'n_neighbors': 10, 'metric': 'euclidean', 'algorithm': 'brute'},
+        {'n_neighbors': 15, 'metric': 'euclidean', 'algorithm': 'brute'},
+    ]
+    
+    best_cf_score = -1
+    best_cf_params = None
+    
+    # Use a sample for quick evaluation
+    sample_cf_matrix = user_item_matrix[:min(500, user_item_matrix.shape[0])]
+    
+    for params in nn_params:
+        try:
+            temp_model = NearestNeighbors(**params)
+            temp_model.fit(sample_cf_matrix)
+            
+            # Evaluate by finding neighbors for a few samples
+            n_samples = min(10, sample_cf_matrix.shape[0])
+            sample_indices = np.random.choice(sample_cf_matrix.shape[0], n_samples, replace=False)
+            
+            avg_distances = []
+            for idx in sample_indices:
+                distances, indices = temp_model.kneighbors(sample_cf_matrix[idx], n_neighbors=min(5, params['n_neighbors']))
+                avg_distances.append(np.mean(distances))
+            
+            avg_score = np.mean(avg_distances) if avg_distances else 0
+            if avg_score < best_cf_score or best_cf_score == -1:  # Lower distance is better
+                best_cf_score = avg_score
+                best_cf_params = params
+        except:
+            continue
+    
+    print(f"Best collaborative filtering parameters: {best_cf_params}")
+    
+    # Train the final collaborative filtering model with best parameters
+    collaborative_filtering_model = NearestNeighbors(
+        n_neighbors=best_cf_params['n_neighbors'] if best_cf_params else 20,
+        metric=best_cf_params['metric'] if best_cf_params else 'cosine',
+        algorithm=best_cf_params['algorithm'] if best_cf_params else 'brute'
+    )
     collaborative_filtering_model.fit(user_item_matrix)  # Fit on the user-item matrix
 
-    # Create content-based similarity model using TF-IDF matrix
-    print("Training content-based similarity model...")
-    content_similarity_model = NearestNeighbors(n_neighbors=20, metric='cosine', algorithm='brute')
+    # HYPERPARAMETER TUNING: Optimize content-based similarity model
+    print("Performing hyperparameter tuning for content-based similarity model...")
+    
+    best_content_score = -1
+    best_content_params = None
+    
+    # Test different parameters for content-based model
+    content_params = [
+        {'n_neighbors': 10, 'metric': 'cosine', 'algorithm': 'brute'},
+        {'n_neighbors': 15, 'metric': 'cosine', 'algorithm': 'brute'},
+        {'n_neighbors': 20, 'metric': 'cosine', 'algorithm': 'brute'},
+        {'n_neighbors': 10, 'metric': 'euclidean', 'algorithm': 'brute'},
+        {'n_neighbors': 15, 'metric': 'euclidean', 'algorithm': 'brute'},
+    ]
+    
+    for params in content_params:
+        try:
+            temp_model = NearestNeighbors(**params)
+            temp_model.fit(tfidf_matrix)
+            
+            # Evaluate by finding neighbors for a few samples
+            n_samples = min(10, tfidf_matrix.shape[0])
+            sample_indices = np.random.choice(tfidf_matrix.shape[0], n_samples, replace=False)
+            
+            avg_distances = []
+            for idx in sample_indices:
+                distances, indices = temp_model.kneighbors(tfidf_matrix[idx], n_neighbors=min(5, params['n_neighbors']))
+                avg_distances.append(np.mean(distances))
+            
+            avg_score = np.mean(avg_distances) if avg_distances else 0
+            if avg_score < best_content_score or best_content_score == -1:  # Lower distance is better
+                best_content_score = avg_score
+                best_content_params = params
+        except:
+            continue
+    
+    print(f"Best content-based similarity parameters: {best_content_params}")
+    
+    # Create content-based similarity model with best parameters
+    content_similarity_model = NearestNeighbors(
+        n_neighbors=best_content_params['n_neighbors'] if best_content_params else 20,
+        metric=best_content_params['metric'] if best_content_params else 'cosine',
+        algorithm=best_content_params['algorithm'] if best_content_params else 'brute'
+    )
     content_similarity_model.fit(tfidf_matrix)  # Fit on the TF-IDF matrix
 
     # Store both models globally
@@ -321,208 +423,3 @@ def initialize_data():
     content_model = content_similarity_model
 
     print("Data initialization completed successfully!")
-
-def get_item_item_recommendations(movie_idx, n_recommendations=10):
-    """Get item-item recommendations for a given movie"""
-    if movie_idx >= tfidf_matrix.shape[0]:
-        return [], []
-    
-    # Get the movie vector from the TF-IDF matrix
-    movie_vector = tfidf_matrix[movie_idx:movie_idx+1]
-    
-    # Find similar items using the content-based similarity model
-    distances, indices = content_model.kneighbors(movie_vector, n_neighbors=n_recommendations+1)
-    
-    # Exclude the first result (the movie itself)
-    similar_indices = indices[0][1:]
-    similarity_scores = 1 - distances[0][1:]  # Convert distance to similarity
-    
-    # Filter out indices that are out of range
-    valid_indices = [idx for idx in similar_indices if idx < len(movies_metadata_df)]
-    valid_similarities = [similarity_scores[i] for i, idx in enumerate(similar_indices) if idx < len(movies_metadata_df)]
-    
-    return valid_indices, valid_similarities
-
-def get_cluster_aware_recommendations(movie_idx, n_recommendations=10, restrict_to_same_cluster=True):
-    """Get recommendations restricted to same cluster or similar clusters"""
-    if movie_idx >= len(movies_metadata_df):
-        return []
-    
-    # Get base recommendations
-    similar_indices, similarity_scores = get_item_item_recommendations(movie_idx, n_recommendations*2)
-    
-    # Get the cluster of the input movie
-    input_cluster = movies_metadata_df.iloc[movie_idx]['cluster']
-    
-    # Filter recommendations based on cluster
-    filtered_recommendations = []
-    
-    for idx, score in zip(similar_indices, similarity_scores):
-        if idx < len(movies_metadata_df):
-            rec_cluster = movies_metadata_df.iloc[idx]['cluster']
-            
-            # If restricting to same cluster, only include if same cluster
-            if restrict_to_same_cluster:
-                if rec_cluster == input_cluster:
-                    filtered_recommendations.append((idx, score))
-            else:
-                # Otherwise, include all
-                filtered_recommendations.append((idx, score))
-        
-        # Stop when we have enough recommendations
-        if len(filtered_recommendations) >= n_recommendations:
-            break
-    
-    # Return top n_recommendations
-    return filtered_recommendations[:n_recommendations]
-
-@app.route('/api/movies', methods=['GET'])
-def get_movies():
-    """Get all movies"""
-    try:
-        movies_list = []
-        for idx, row in movies_metadata_df.iterrows():
-            movie = {
-                'id': idx + 1,
-                'title': row['title'],
-                'overview': row['overview'],
-                'cluster': int(row['cluster']),
-                'cluster_name': row['cluster_name'] if pd.notna(row['cluster_name']) else 'Unknown'
-            }
-            movies_list.append(movie)
-        
-        return jsonify(movies_list)
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
-
-@app.route('/api/clusters', methods=['GET'])
-def get_clusters():
-    """Get cluster information"""
-    try:
-        clusters_list = []
-        cluster_counts = movies_metadata_df['cluster'].value_counts().sort_index()
-        
-        for cluster_id in cluster_counts.index:
-            cluster_name = cluster_names.get(cluster_id, f'Cluster {cluster_id}')
-            cluster_info = {
-                'id': int(cluster_id),
-                'name': cluster_name,
-                'count': int(cluster_counts[cluster_id]),
-                'movies': []
-            }
-            
-            # Get sample movies for this cluster
-            cluster_movies = movies_metadata_df[movies_metadata_df['cluster'] == cluster_id]
-            for _, movie in cluster_movies.head(5).iterrows():  # Get first 5 movies in cluster
-                cluster_info['movies'].append({
-                    'id': int(cluster_movies.index[cluster_movies['title'] == movie['title']][0]) + 1,
-                    'title': movie['title']
-                })
-            
-            clusters_list.append(cluster_info)
-        
-        return jsonify(clusters_list)
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
-
-@app.route('/api/recommendations/<int:movie_id>', methods=['GET'])
-def get_recommendations(movie_id):
-    """Get recommendations for a specific movie"""
-    try:
-        # Convert to 0-based index
-        movie_idx = movie_id - 1
-        
-        if movie_idx < 0 or movie_idx >= len(movies_metadata_df):
-            return jsonify({'error': 'Movie not found'}), 404
-        
-        # Get the original movie
-        original_movie = {
-            'id': movie_id,
-            'title': movies_metadata_df.iloc[movie_idx]['title'],
-            'overview': movies_metadata_df.iloc[movie_idx]['overview'],
-            'cluster': int(movies_metadata_df.iloc[movie_idx]['cluster']),
-            'cluster_name': movies_metadata_df.iloc[movie_idx]['cluster_name']
-        }
-        
-        # Get cluster-aware recommendations
-        recommendations_data = get_cluster_aware_recommendations(movie_idx, n_recommendations=10, restrict_to_same_cluster=True)
-        
-        recommendations = []
-        for idx, score in recommendations_data:
-            if idx < len(movies_metadata_df):
-                rec_movie = {
-                    'id': int(idx + 1),
-                    'title': movies_metadata_df.iloc[idx]['title'],
-                    'overview': movies_metadata_df.iloc[idx]['overview'],
-                    'cluster': int(movies_metadata_df.iloc[idx]['cluster']),
-                    'cluster_name': movies_metadata_df.iloc[idx]['cluster_name'],
-                    'similarity': float(score)
-                }
-                recommendations.append(rec_movie)
-        
-        result = {
-            'original_movie': original_movie,
-            'recommendations': recommendations
-        }
-        
-        return jsonify(result)
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
-
-@app.route('/api/search', methods=['GET'])
-def search_movies():
-    """Search for movies by title"""
-    try:
-        query = request.args.get('q', '').lower()
-        if not query:
-            return jsonify([])
-        
-        # Filter movies that match the query
-        matches = movies_metadata_df[movies_metadata_df['title'].str.lower().str.contains(query)]
-        
-        results = []
-        for idx, row in matches.iterrows():
-            movie = {
-                'id': int(idx + 1),
-                'title': row['title'],
-                'overview': row['overview'],
-                'cluster': int(row['cluster']),
-                'cluster_name': row['cluster_name']
-            }
-            results.append(movie)
-        
-        # Return top 10 matches
-        return jsonify(results[:10])
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
-
-@app.route('/api/movie/<int:movie_id>', methods=['GET'])
-def get_movie(movie_id):
-    """Get a specific movie by ID"""
-    try:
-        movie_idx = movie_id - 1
-        if movie_idx < 0 or movie_idx >= len(movies_metadata_df):
-            return jsonify({'error': 'Movie not found'}), 404
-        
-        movie = {
-            'id': movie_id,
-            'title': movies_metadata_df.iloc[movie_idx]['title'],
-            'overview': movies_metadata_df.iloc[movie_idx]['overview'],
-            'cluster': int(movies_metadata_df.iloc[movie_idx]['cluster']),
-            'cluster_name': movies_metadata_df.iloc[movie_idx]['cluster_name']
-        }
-        
-        return jsonify(movie)
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
-
-@app.route('/', methods=['GET'])
-def health_check():
-    """Health check endpoint"""
-    return jsonify({'status': 'healthy', 'message': 'Movie Recommendation API is running'})
-
-if __name__ == '__main__':
-    print("Initializing data and models...")
-    initialize_data()
-    print("Starting Flask server...")
-    app.run(debug=True, host='0.0.0.0', port=5000)
