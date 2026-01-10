@@ -17,7 +17,7 @@ const MovieList = ({ movies, onMovieSelect, selectedMovie }) => {
             title={`${movie.title} - ${movie.cluster_name}`}
           >
             <h4>{movie.title}</h4>
-            <p><strong>Cluster:</strong> {movie.cluster_name}</p>
+            <p className="cluster-info"><strong>Cluster:</strong> {movie.cluster_name}</p>
             <p>{movie.overview.substring(0, 100)}{movie.overview.length > 100 ? '...' : ''}</p>
           </div>
         ))
