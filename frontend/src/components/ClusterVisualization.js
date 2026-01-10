@@ -8,7 +8,6 @@ const ClusterVisualization = ({ clusters, onClusterSelect, selectedCluster }) =>
 
   return (
     <div className="cluster-visualization">
-      <h3>Movie Clusters</h3>
       {clusters.length > 0 ? (
         clusters.map((cluster) => (
           <div
@@ -19,13 +18,6 @@ const ClusterVisualization = ({ clusters, onClusterSelect, selectedCluster }) =>
           >
             <h4>{cluster.name}</h4>
             <p>{cluster.count} movies</p>
-            <div className="cluster-movies-preview">
-              {cluster.movies.slice(0, 3).map((movie) => (
-                <span key={movie.id} className="movie-preview">
-                  {movie.title.split(' ')[0]}
-                </span>
-              ))}
-            </div>
           </div>
         ))
       ) : (
