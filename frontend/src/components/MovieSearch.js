@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
+import './MovieSearch.css';
 
 const MovieSearch = ({ onSearch, onResultSelect, results, showResults }) => {
   const [query, setQuery] = useState('');
